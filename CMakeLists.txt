@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.6.0)
+cmake_minimum_required(VERSION 3.10.0)
 project(GOCK)
 
 set(SP2_PATH "../SeriousProton2" CACHE STRING "Path to SeriousProton2 sources")
