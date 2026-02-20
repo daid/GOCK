@@ -16,8 +16,7 @@
 #include <sp2/scene/camera.h>
 #include <sp2/scene/tilemap.h>
 #include <sp2/io/keybinding.h>
-
-#define EPSILON 0.001
+#include "mesh.h"
 
 
 sp::io::Keybinding mouse_left{"MOUSE_LEFT", "pointer:1"};
@@ -33,166 +32,6 @@ public:
             image.getPtr()[n] = sp::Color(sp::HsvColor(n * 360 / 128, 100, 100)).toInt();
         setImage(std::move(image));
     }
-};
-
-class Mesh
-{
-public:
-    class Edge
-    {
-    public:
-        size_t v_index;
-        int type = 0;
-    };
-
-    class Vertex
-    {
-    public:
-        sp::Vector3d position;
-        std::vector<Edge> edges;
-    };
-
-    int add_vertex(sp::Vector3d v)
-    {
-        for(size_t idx=0; idx<vertices.size(); idx++) {
-            if ((v - vertices[idx].position).length() < EPSILON)
-                return idx;
-        }
-        vertices.push_back({v});
-        return vertices.size() - 1;
-    }
-
-    void remove_if(std::function<bool(const Vertex& v)> func) {
-        for(size_t idx=0; idx<vertices.size(); ) {
-            if (func(vertices[idx])) {
-                remove(idx);
-            } else {
-                idx++;
-            }
-        }
-    }
-
-    void remove(size_t idx)
-    {
-        for(auto& v : vertices) {
-            v.edges.erase(std::remove_if(v.edges.begin(), v.edges.end(), [idx](auto& edge) { return edge.v_index == idx; }), v.edges.end());
-            for(auto& e : v.edges)
-                if (e.v_index >= idx)
-                    e.v_index -= 1;
-        }
-        vertices.erase(vertices.begin() + idx);
-    }
-
-    void add_vertex_flipped(sp::Vector3d v)
-    {
-        add_vertex(v);
-        if (v.x > 0) {
-            add_vertex({-v.x, v.y, v.z});
-            if (v.y > 0) {
-                add_vertex({-v.x, -v.y, v.z});
-                if (v.z > 0) {
-                    add_vertex({-v.x, -v.y, -v.z});
-                }
-            }
-            if (v.z > 0) {
-                add_vertex({-v.x, v.y, -v.z});
-            }
-        }
-        if (v.y > 0) {
-            add_vertex({ v.x,-v.y, v.z});
-            if (v.z > 0) {
-                add_vertex({ v.x,-v.y,-v.z});
-            }
-        }
-        if (v.z > 0) {
-            add_vertex({ v.x, v.y,-v.z});
-        }
-    }
-
-    void build_edges()
-    {
-        for(auto& v : vertices) {
-            v.edges.clear();
-        }
-
-        for(size_t base_idx=0; base_idx<vertices.size(); base_idx++) {
-            double closest_dist = std::numeric_limits<double>::max();
-            for(size_t idx=0; idx<vertices.size(); idx++) {
-                if (idx == base_idx) continue;
-                closest_dist = std::min(closest_dist, (vertices[base_idx].position - vertices[idx].position).length());
-            }
-            for(size_t idx=0; idx<vertices.size(); idx++) {
-                if (idx == base_idx) continue;
-                if ((vertices[base_idx].position - vertices[idx].position).length() > closest_dist * 1.5) continue;
-                vertices[base_idx].edges.push_back({idx});
-            }
-        }
-
-        lengths.clear();
-        for(auto& v : vertices) {
-            for(auto& edge : v.edges) {
-                auto length = (v.position - vertices[edge.v_index].position).length();
-                auto it = std::find_if(lengths.begin(), lengths.end(), [length](auto len) { return std::abs(len - length) < EPSILON; });
-                if (it != lengths.end()) {
-                    edge.type = it - lengths.begin();
-                } else {
-                    edge.type = lengths.size();
-                    lengths.push_back(length);
-                }
-            }
-        }
-    }
-
-    void normalize() {
-        for(auto& v : vertices)
-            v.position = v.position.normalized();
-    }
-
-    Mesh subdiv() {
-        Mesh result;
-        for(const auto& v : vertices) {
-            result.add_vertex(v.position);
-            for(const auto& edge : v.edges) {
-                result.add_vertex((v.position + vertices[edge.v_index].position) * 0.5);
-            }
-        }
-        return result;
-    }
-
-    std::shared_ptr<sp::MeshData> create_mesh()
-    {
-        sp::MeshData::Vertices vertices;
-        sp::MeshData::Indices indices;
-
-        auto add = [&](sp::Vector3d p0, sp::Vector3d p1, float u) {
-            indices.push_back(vertices.size());
-            indices.push_back(vertices.size()+1);
-            indices.push_back(vertices.size()+2);
-
-            indices.push_back(vertices.size());
-            indices.push_back(vertices.size()+2);
-            indices.push_back(vertices.size()+1);
-
-            auto nf = sp::Vector3f(p0 + p1).normalized();
-
-            vertices.push_back({{float(p0.x), float(p0.y), float(p0.z)}, nf, {u, 0}});
-            vertices.push_back({{float(p1.x), float(p1.y), float(p1.z)}, nf, {u, 0}});
-            auto n = (p1 - p0).normalized();
-            auto s = p0.normalized().cross(n).normalized() * 0.03;
-            auto p2 = p0 + s;
-            vertices.push_back({{float(p2.x), float(p2.y), float(p2.z)}, nf, {u, 0}});
-        };
-        for(const auto& v : this->vertices) {
-            for(const auto& edge : v.edges) {
-                add(v.position, this->vertices[edge.v_index].position, float(edge.type) / float(lengths.size()));
-            }
-        }
-
-        return sp::MeshData::create(std::move(vertices), std::move(indices));
-    }
-
-    std::vector<Vertex> vertices;
-    std::vector<double> lengths;
 };
 
 class Connection
@@ -253,16 +92,6 @@ public:
         }
 
         {
-            auto len_min = std::numeric_limits<double>::max();
-            auto len_max = std::numeric_limits<double>::min();
-            for(const auto& v : mesh.vertices) {
-                for(auto edge : v.edges) {
-                    auto length = (v.position - mesh.vertices[edge.v_index].position).length();
-                    len_min = std::min(len_min, length);
-                    len_max = std::max(len_max, length);
-                }
-            }
-
             std::vector<Connector> connectors;
             for(const auto& v : mesh.vertices) {
                 auto q = sp::Quaterniond::fromVectorToVector(v.position.normalized(), sp::Vector3d(0, 0, 1).normalized());
@@ -329,6 +158,8 @@ public:
                 xoffset += 1.0;
             }
 
+            auto len_max = *std::max_element(mesh.lengths.begin(), mesh.lengths.end());
+
             auto longest_possible_length = 240;
             auto connector_center_offset = 7;
             for(size_t idx=0; idx<mesh.lengths.size(); idx++) {
@@ -336,6 +167,27 @@ public:
             }
             fclose(f);
             LOG(Debug, "Radius:", 1.0 / len_max * (longest_possible_length + connector_center_offset));
+
+            f = fopen("export.svg", "wt");
+            float svg_width = 290.0;
+            float svg_height = 200.0;
+            fprintf(f, "<svg width=\"%fmm\" height=\"%fmm\" viewBox=\"0 0 %f %f\" xmlns=\"http://www.w3.org/2000/svg\">", svg_width, svg_height, svg_width, svg_height);
+            for(size_t idx=0; idx<mesh.lengths.size(); idx++) {
+                auto len = mesh.lengths[idx] / len_max * (longest_possible_length + connector_center_offset) - connector_center_offset;
+                auto color = sp::Color(sp::HsvColor(idx * 360 / mesh.lengths.size(), 80, 100));
+                fprintf(f, "<rect x=\"1\" y=\"%f\" width=\"%f\" height=\"5\" style=\"fill:%s; stroke-width:.1; stroke: black\" />", idx * 15.0 + 5, len, color.toString().c_str());
+                fprintf(f, "<text x=\"1.5\" y=\"%f\" font-size=\"2.8\" fill=\"black\">%dx %.1fmm</text>", idx * 15.0 + 9, mesh.lengths_count[idx], len);
+                fprintf(f, "<path style=\"fill:%s; stroke-width:.2; stroke: black\" d=\"", color.toString().c_str());
+                int sides_per_type[] = {6, 4, 5, 7};
+                int sides = sides_per_type[idx % 4];
+                for(int n=0; n<sides; n++) {
+                    auto p = sp::Vector2d(0, 4).rotate((n + 0.5) * 360 / sides) + sp::Vector2d(10, 15 + idx*15);
+                    fprintf(f, "%c%f,%f", n ? 'L' : 'M', p.x, p.y);
+                }
+                fprintf(f, "z\"/>");
+            }
+            fprintf(f, "</svg>");
+            fclose(f);
         }
 
         auto n = new sp::Node(getRoot());
