@@ -1,3 +1,6 @@
-export.*
+export.scad
+export.svg
+*.stl
+*.3mf
 .vscode
 build
